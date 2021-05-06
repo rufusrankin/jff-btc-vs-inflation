@@ -1,0 +1,181 @@
+# Demonstration R Code for 
+# "Bitcoin Vs. Inflation"
+# http://www.rufusrankin.com/
+# May 2021
+# By Rufus Rankin
+# http://www.rufusrankin.com 
+# (c) 2021 by Rufus Rankin
+# This code and the referenced article 
+# Are for information purposes only
+# No investment advice or warranty is provided
+# By the author or his affiliates
+# Use at your own risk
+
+#Load packages
+
+require(tidyquant)
+require(tidyverse)
+require(riingo)
+require(timetk)
+require(roll)
+
+options(scipen = 50)
+
+#Function
+
+#wrapper to compute and present various statistics
+#hat tip to Ilya Kipnis @ Quantstrattrader.com
+
+stratStats <- function(rets) {
+  stats <- rbind(table.AnnualizedReturns(rets), maxDrawdown(rets),CDD(rets),vami(rets))
+  #vami <- cumprod(1+rets)
+  #end.vami<- last(vami)
+  #stats[6,] <- stats[1,]/stats[4,]
+  #stats[7,] <- stats[1,]/stats[5,]
+  stats[7,] <- price.rsq(rets)
+  rownames(stats)[4] <- "MaxDD"
+  rownames(stats)[5] <- "CDaR"
+  rownames(stats)[6] <- "End $"
+  rownames(stats)[7] <- "RSQ"
+  stats<-round(stats,4)
+  return(stats)
+}
+
+#Get Data
+
+#DXY dollar index
+
+getSymbols("DTWEXBGS", src="FRED", from = "1950-01-01", to = "2021-4-31")
+
+usdi.p<-DTWEXBGS
+
+usdi.p.w<-usdi.p[endpoints(usdi.p, on = "weeks")]
+
+usdi.r<-na.omit(diff(log(usdi.p)))
+
+usdi.wr<-na.omit(diff(log(usdi.p.w)))
+
+#BTC 
+
+riingo_set_token("YOUR-TOKEN-HERE")
+
+start.date<-"2015-01-01"
+
+btc<-riingo_crypto_prices("btcusd",start_date = start.date)
+
+btc.dates<-as.Date(btc$date)
+
+btc.close<-cbind(btc.dates,btc$close)
+
+btc.p<-xts(btc$close,order.by = btc$date)
+
+index(btc.p)<-as.Date(index(btc.p))
+
+btc.p.w<-btc.p[endpoints(btc.p, on = "weeks")]
+
+btc.dr<-na.omit(diff(log(btc.p)))
+
+btc.wr<-na.omit(diff(log(btc.p.w)))
+
+#Gold and TIPs
+
+mkt.sym<-c("GLD","TIP")
+
+getSymbols(mkt.sym,from = "1990-01-01")
+
+mkt.prices<-na.omit(cbind(GLD$GLD.Adjusted,TIP$TIP.Adjusted))
+
+mkt.prices.w<-mkt.prices[endpoints(mkt.prices, on = "weeks")]
+
+mkt.wr<-na.omit(diff(log(mkt.prices.w)))
+
+colnames(mkt.wr)<-c("GLD","TIP")
+
+week.index<-index(mkt.wr)
+
+#Combine returns
+
+#adjust BTC prices to work weeks
+
+bww<-btc.p[week.index]
+
+bwr<-na.omit(diff(log(bww)))
+
+arw<-na.omit(cbind(usdi.wr, bwr, mkt.wr))
+
+colnames(arw)<-c("USD","BTC","GLD","TIP")
+
+#Correlation
+
+d.cor<-cor(arw)
+
+btc.cor<-d.cor[2,]
+
+btc.cor<-btc.cor[-2]
+
+barplot(btc.cor, col = "darkblue", main = "Correlation to BTC", ylim = c(-0.20, 0.20))
+
+#Regression
+
+arw.df<-data.frame(arw)
+
+btc.vs.usd<-lm(USD~BTC, data = arw.df)
+
+summary(btc.vs.usd)
+
+plot(x=arw.df$BTC, y = arw.df$USD, data = arw.df, col = "darkblue", main = "BTC vs. USD", pch = 19)
+
+abline(lm(USD~BTC, data = arw.df), col = "darkred", lwd = 3)
+
+tip.vs.usd<-lm(USD~TIP, data = arw.df)
+
+summary(tip.vs.usd)
+
+gld.vs.usd<-lm(USD~GLD, data = arw.df)
+
+summary(gld.vs.usd)
+
+plot(x=arw.df$GLD, y = arw.df$USD, data = arw.df, col = "darkblue", main = "GLD vs. USD", pch = 19)
+
+abline(lm(USD~GLD, data = arw.df), col = "darkred", lwd = 3)
+
+usd.all<-lm(USD~., data = arw.df)
+
+summary(usd.all)
+
+#Raw returns of assets
+
+stratStats(arw)
+
+#Portfolios
+
+all3<-Return.portfolio(arw, weights = c(0,0.05,0.475,0.475), rebalance_on = "months")
+
+all3.vs<-Return.portfolio(arw,weights = c(0,0.035,0.20,0.765), rebalance_on = "months")
+
+gldtip<-Return.portfolio(arw[,3:4], rebalance_on = "months")
+
+d.c<-na.omit(cbind(arw$USD,gldtip,all3))
+
+colnames(d.c)<-c("USD","GLD&TIP","IHP")
+
+charts.PerformanceSummary(d.c, main = "Portfolios and USD")
+
+stratStats(d.c)
+
+p.df<-data.frame(d.c)
+
+#Portfolio regression
+
+gt.usd<-lm(p.df$USD ~ p.df$GLD.TIP, data = p.df)
+
+summary(gt.usd)
+
+p3.usd<-lm(p.df$USD ~ p.df$IHP)
+
+summary(p3.usd)
+
+plot(x = p.df$IHP, y = p.df$USD, col = "darkblue", pch = 19, main = "USD vs. IHP")
+
+abline(lm(p.df$USD ~ p.df$IHP), col = "darkred", lwd = 3)
+
